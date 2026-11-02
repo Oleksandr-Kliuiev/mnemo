@@ -1,0 +1,29 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#5B4CF0"/>
+      <stop offset="0.55" stop-color="#7C3AED"/>
+      <stop offset="1" stop-color="#C026D3"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.25" cy="0.15" r="0.75">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.35"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#EEF0FF"/>
+    </linearGradient>
+    <filter id="shadow" x="-30%" y="-30%" width="160%" height="160%">
+      <feDropShadow dx="0" dy="18" stdDeviation="26" flood-color="#1e0b5c" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+  <rect width="1024" height="1024" rx="230" fill="url(#bg)"/>
+  <rect width="1024" height="1024" rx="230" fill="url(#glow)"/>
+  <g transform="rotate(-12 470 520)" filter="url(#shadow)">
+    <rect x="250" y="300" width="440" height="330" rx="48" fill="#ffffff" fill-opacity="0.42"/>
+  </g>
+  <g transform="rotate(7 560 560)" filter="url(#shadow)">
+    <rect x="330" y="360" width="460" height="340" rx="50" fill="url(#card)"/>
+    <path d="M 630.5 470.9 A 92.0 92.0 0 1 1 507.2 454.6" fill="none" stroke="#5B4CF0" stroke-width="40.0" stroke-linecap="round"/>
+    <path d="M 541.1 430.9 L 517.6 489.5 L 478.0 433.0 Z" fill="#5B4CF0" stroke="#5B4CF0" stroke-width="10.0" stroke-linejoin="round"/>
+  </g></svg>
