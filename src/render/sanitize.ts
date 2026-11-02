@@ -27,15 +27,10 @@ export function sanitizeCardHtml(html: string): string {
   })
 }
 
-/** Field HTML written by the editor: a smaller, predictable subset. */
+/**
+ * Field HTML saved by the editor. Same safe profile as card rendering, so editing a note
+ * imported from Anki never strips its formatting (image sizes, tables, ruby…).
+ */
 export function sanitizeFieldHtml(html: string): string {
-  ensureHooks()
-  return DOMPurify.sanitize(html, {
-    ALLOWED_TAGS: [
-      'b', 'strong', 'i', 'em', 'u', 's', 'sub', 'sup', 'br', 'div', 'p', 'span', 'ul', 'ol', 'li',
-      'img', 'a', 'code', 'pre', 'blockquote', 'h1', 'h2', 'h3', 'hr', 'table', 'thead', 'tbody',
-      'tr', 'td', 'th', 'ruby', 'rb', 'rt', 'rp', 'font', 'mark',
-    ],
-    ALLOWED_ATTR: ['src', 'href', 'alt', 'title', 'class', 'style', 'color', 'colspan', 'rowspan', 'data-media'],
-  })
+  return sanitizeCardHtml(html)
 }

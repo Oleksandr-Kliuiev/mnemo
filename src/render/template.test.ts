@@ -126,3 +126,15 @@ describe('html helpers', () => {
     expect(isFieldEmpty('<img src="a.png">')).toBe(false)
   })
 })
+
+describe('field sanitizing', () => {
+  it('keeps Anki formatting but drops scripts', async () => {
+    const { sanitizeFieldHtml } = await import('./sanitize')
+    const html = sanitizeFieldHtml('<img src="a.png" width="120" height="80"><table><tr><td colspan="2"><small>x</small></td></tr></table><script>alert(1)</script><a href="javascript:alert(1)">l</a>')
+    expect(html).toContain('width="120"')
+    expect(html).toContain('colspan="2"')
+    expect(html).toContain('<small>')
+    expect(html).not.toContain('<script')
+    expect(html).not.toContain('javascript:')
+  })
+})
