@@ -14,6 +14,32 @@
 
 Подписка Apple и переустановка не нужны: это веб-приложение.
 
+## Нативное приложение для iPhone (бесплатный Apple ID)
+
+Тот же код упакован в iOS-приложение (Capacitor, папка `ios/`). С бесплатным Apple ID подпись действует 7 дней, поэтому Mac продлевает её сам:
+
+- раз в 3 часа проверяет срок и за 2 дня до окончания пересобирает и переустанавливает приложение поверх старого — данные внутри приложения сохраняются;
+- перед каждой переустановкой забирает с iPhone автокопии (`Файлы → На iPhone → Mnemo → Backups`) в `~/Documents/Mnemo Backups`;
+- берёт свежую версию кода из GitHub и шлёт уведомление на Mac, если iPhone недоступен.
+
+Подготовка (один раз): Xcode → Settings → Accounts → добавить Apple ID; подключить iPhone кабелем, «Доверять», включить «Режим разработчика»; в Xcode → Window → Devices and Simulators отметить «Connect via network».
+
+Включить автопродление:
+
+```bash
+git clone https://github.com/Oleksandr-Kliuiev/mnemo.git "$HOME/Library/Application Support/Mnemo/repo"
+bash "$HOME/Library/Application Support/Mnemo/repo/ios/scripts/setup-automation.sh"
+```
+
+Первая установка (iPhone подключён и разблокирован):
+
+```bash
+bash "$HOME/Library/Application Support/Mnemo/repo/ios/scripts/mnemo-ios.sh" install
+```
+
+После неё на iPhone один раз: Настройки → Основные → VPN и управление устройством → ваш Apple ID → «Доверять».
+Статус: `mnemo-ios.sh status`, выключить: `ios/scripts/remove-automation.sh`.
+
 ## Разработка
 
 ```bash

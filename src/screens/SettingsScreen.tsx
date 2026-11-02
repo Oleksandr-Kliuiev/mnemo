@@ -305,30 +305,32 @@ export default function SettingsScreen() {
             title="Занято на устройстве"
             value={usage ? formatBytes(usage.used) : '—'}
           />
-          <div className="row row--icon">
-            <span className="row__icon" style={{ background: '#5E5CE6' }} aria-hidden>
-              <Archive size={18} />
-            </span>
-            <span className="row__body">
-              <span className="row__title">Защита от удаления</span>
-              <span className="row__sub">
-                {persisted ? 'Включена: система не удалит данные при нехватке места' : 'Попросить систему не удалять данные при нехватке места'}
+          {!native && (
+            <div className="row row--icon">
+              <span className="row__icon" style={{ background: '#5E5CE6' }} aria-hidden>
+                <Archive size={18} />
               </span>
-            </span>
-            {!persisted && (
-              <button
-                type="button"
-                className="btn btn--small btn--tinted"
-                onClick={async () => {
-                  const ok = await requestPersistentStorage()
-                  setPersisted(ok)
-                  toast.show(ok ? 'Защита включена' : 'Система не разрешила. На iPhone установите Mnemo на экран «Домой».')
-                }}
-              >
-                Включить
-              </button>
-            )}
-          </div>
+              <span className="row__body">
+                <span className="row__title">Защита от удаления</span>
+                <span className="row__sub">
+                  {persisted ? 'Включена: система не удалит данные при нехватке места' : 'Попросить систему не удалять данные при нехватке места'}
+                </span>
+              </span>
+              {!persisted && (
+                <button
+                  type="button"
+                  className="btn btn--small btn--tinted"
+                  onClick={async () => {
+                    const ok = await requestPersistentStorage()
+                    setPersisted(ok)
+                    toast.show(ok ? 'Защита включена' : 'Система не разрешила. На iPhone установите Mnemo на экран «Домой».')
+                  }}
+                >
+                  Включить
+                </button>
+              )}
+            </div>
+          )}
         </div>
       </Section>
 
