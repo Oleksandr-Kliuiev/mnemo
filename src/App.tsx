@@ -9,6 +9,7 @@ import { DialogProvider } from './ui/Dialogs'
 import { ToastProvider, useToast } from './ui/Toast'
 import { Loading } from './ui/controls'
 import { Screen } from './ui/Screen'
+import { applyStatusBar, isNative, startNativeServices } from './lib/native'
 import DecksScreen from './screens/DecksScreen'
 import DeckScreen from './screens/DeckScreen'
 
@@ -38,6 +39,7 @@ function useEffectiveTheme(setting: ThemeSetting): 'light' | 'dark' {
     document.documentElement.setAttribute('data-theme', theme)
     const bg = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim() || (theme === 'dark' ? '#000' : '#f2f2f7')
     document.querySelectorAll('meta[name="theme-color"]').forEach((m) => m.setAttribute('content', bg))
+    void applyStatusBar(theme)
   }, [theme])
   return theme
 }
@@ -116,6 +118,7 @@ export function App() {
 
   useEffect(() => {
     void ensureBuiltins()
+    void startNativeServices()
   }, [])
 
   const fullscreen = FULLSCREEN.has(route.parts[0] ?? '')
@@ -131,7 +134,8 @@ export function App() {
           <Suspense fallback={<Loading />}>{screenFor(route)}</Suspense>
           {!fullscreen && <TabBar path={route.path} />}
         </div>
-        <UpdatePrompt />
+        {/* The native app updates by reinstalling; only the web app has a service worker. */}
+        {!isNative() && <UpdatePrompt />}
       </ToastProvider>
     </DialogProvider>
   )

@@ -13,6 +13,7 @@ import { backupFileName, exportBackup, inspectBackup, restoreBackup } from '../i
 import { formatBytes, formatDateTime, formatPercent, count, DAYS, CARDS } from '../lib/format'
 import { pickFile, shareOrDownload } from '../lib/platform'
 import { useRoute } from '../lib/router'
+import { autoBackup, autoBackupStatus, isNative, type AutoBackupStatus } from '../lib/native'
 
 function TextSetting({
   id,
@@ -83,7 +84,13 @@ export default function SettingsScreen() {
   const [usage, setUsage] = useState<{ used: number; quota: number } | null>(null)
   const [persisted, setPersisted] = useState<boolean | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  const [auto, setAuto] = useState<AutoBackupStatus | null>(null)
+  const native = isNative()
   const set = <K extends keyof Settings>(k: K, v: Settings[K]) => void setSetting(k, v)
+
+  useEffect(() => {
+    if (native) void autoBackupStatus().then(setAuto)
+  }, [native, busy])
 
   useEffect(() => {
     void navigator.storage?.estimate?.().then((e) => setUsage({ used: e.usage ?? 0, quota: e.quota ?? 0 }))
@@ -249,6 +256,33 @@ export default function SettingsScreen() {
           <ButtonRow onClick={() => void restore()} disabled={busy === 'restore'} icon={<Upload size={18} />} iconColor="#0A84FF" title={busy === 'restore' ? 'Восстанавливаю…' : 'Восстановить из копии'} />
           <LinkRow to="/import" icon={<FileUp size={18} />} iconColor="#FF9F0A" title="Импорт колод" sub="Anki (.apkg, .colpkg), CSV, TXT" />
         </div>
+        {native && (
+          <div className="group" style={{ marginTop: 'var(--s-3)' }}>
+            <ButtonRow
+              onClick={async () => {
+                setBusy('auto')
+                try {
+                  const name = await autoBackup(true)
+                  toast.show(name ? 'Автокопия сохранена' : 'Нечего сохранять: карточек пока нет')
+                } catch (e) {
+                  toast.show(`Не удалось: ${(e as Error).message}`)
+                } finally {
+                  setBusy(null)
+                }
+              }}
+              disabled={busy === 'auto'}
+              icon={<Archive size={18} />}
+              iconColor="#30B0C7"
+              title={busy === 'auto' ? 'Сохраняю…' : 'Автокопии на iPhone'}
+              sub={
+                auto?.lastAt
+                  ? `Последняя: ${formatDateTime(auto.lastAt)} · хранится ${auto.files}. Файлы → На iPhone → Mnemo → Backups`
+                  : 'Раз в день, хранятся 10 последних. Файлы → На iPhone → Mnemo → Backups'
+              }
+              label="Сделать автокопию сейчас"
+            />
+          </div>
+        )}
         <div className="group" style={{ marginTop: 'var(--s-3)' }}>
           <StaticRow
             icon={<HardDrive size={18} />}

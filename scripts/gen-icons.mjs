@@ -118,6 +118,39 @@ for (const [w, h, r] of DEVICES) {
   }
 }
 
+// Native iOS app (Capacitor): app icon and launch image, when the iOS project exists.
+const iosAssets = join(root, 'ios', 'App', 'App', 'Assets.xcassets')
+import('node:fs').then(({ existsSync, rmSync, readdirSync }) => {
+  if (!existsSync(iosAssets)) return
+  const iconDir = join(iosAssets, 'AppIcon.appiconset')
+  writeFileSync(join(iconDir, 'AppIcon-512@2x.png'), png(square, 1024))
+  const splashDir = join(iosAssets, 'Splash.imageset')
+  for (const f of readdirSync(splashDir)) if (f.endsWith('.png')) rmSync(join(splashDir, f))
+  const S = 2732
+  const size = 300
+  for (const theme of ['light', 'dark']) {
+    const bg = theme === 'light' ? '#F2F2F7' : '#000000'
+    const inner = `<rect width="${S}" height="${S}" fill="${bg}"/>
+      <svg x="${(S - size) / 2}" y="${(S - size) / 2}" width="${size}" height="${size}" viewBox="0 0 1024 1024">${mark({ rounded: true })}</svg>`
+    writeFileSync(join(splashDir, `splash-${theme}.png`), png(svg(S, S, inner), S))
+  }
+  writeFileSync(
+    join(splashDir, 'Contents.json'),
+    JSON.stringify(
+      {
+        images: [
+          { idiom: 'universal', filename: 'splash-light.png' },
+          { idiom: 'universal', filename: 'splash-dark.png', appearances: [{ appearance: 'luminosity', value: 'dark' }] },
+        ],
+        info: { version: 1, author: 'xcode' },
+      },
+      null,
+      2,
+    ),
+  )
+  console.log('iOS assets updated')
+})
+
 const indexPath = join(root, 'index.html')
 const html = readFileSync(indexPath, 'utf8')
 const next = html.replace(/<!-- splash:start -->[\s\S]*?<!-- splash:end -->/, `<!-- splash:start -->\n${links.join('\n')}\n    <!-- splash:end -->`)
