@@ -13,7 +13,7 @@ import { backupFileName, exportBackup, inspectBackup, restoreBackup } from '../i
 import { formatBytes, formatDateTime, formatPercent, count, DAYS, CARDS } from '../lib/format'
 import { pickFile, shareOrDownload } from '../lib/platform'
 import { useRoute } from '../lib/router'
-import { autoBackup, autoBackupStatus, isNative, type AutoBackupStatus } from '../lib/native'
+import { autoBackup, autoBackupStatus, isNative, saveBackupToFiles, type AutoBackupStatus } from '../lib/native'
 
 function TextSetting({
   id,
@@ -107,6 +107,13 @@ export default function SettingsScreen() {
     setBusy('backup')
     try {
       const blob = await exportBackup()
+      if (native) {
+        // WKWebView has no downloads: the copy goes to the app's folder in Files.
+        await saveBackupToFiles(blob, backupFileName())
+        await setSetting('lastBackupAt', Date.now())
+        toast.show(`Сохранено (${formatBytes(blob.size)}): Файлы → На iPhone → Mnemo → Backups`)
+        return
+      }
       const res = await shareOrDownload(blob, backupFileName())
       if (res !== 'cancelled') {
         await setSetting('lastBackupAt', Date.now())

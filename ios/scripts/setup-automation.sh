@@ -21,24 +21,8 @@ else
   git -C "$HOME_DIR/repo" pull --ff-only --quiet || true
 fi
 
+# Optional: the team id; normally it is read from Xcode at every run.
 TEAM_ID="${1:-}"
-if [ -z "$TEAM_ID" ]; then
-  # The Personal Team of the Apple ID added in Xcode → Settings → Accounts.
-  TEAM_ID="$(defaults export com.apple.dt.Xcode - 2>/dev/null | /usr/bin/python3 -c '
-import plistlib, sys
-try:
-    d = plistlib.loads(sys.stdin.buffer.read())
-except Exception:
-    sys.exit(0)
-teams = [t for ts in d.get("IDEProvisioningTeamByIdentifier", {}).values() for t in ts]
-teams.sort(key=lambda t: not t.get("isFreeProvisioningTeam", False))
-print(teams[0]["teamID"] if teams else "")
-')"
-fi
-if [ -z "$TEAM_ID" ]; then
-  echo "Не нашёл команду разработчика. Добавьте Apple ID: Xcode → Settings → Accounts → «+», и запустите снова." >&2
-  exit 1
-fi
 
 NODE_DIR="$(dirname "$(command -v node)")"
 cat >"$HOME_DIR/config.env" <<CFG
@@ -84,5 +68,5 @@ PL
 launchctl bootout "gui/$(id -u)" "$PLIST" 2>/dev/null || true
 launchctl bootstrap "gui/$(id -u)" "$PLIST"
 echo "Готово: проверка каждые 3 часа, продление за 2 дня до истечения подписи."
-echo "Команда разработчика: $TEAM_ID"
+[ -n "$TEAM_ID" ] && echo "Команда разработчика: $TEAM_ID" || echo "Apple ID будет взят из Xcode → Settings → Accounts при каждом запуске."
 echo "Статус:  \"$HOME_DIR/repo/ios/scripts/mnemo-ios.sh\" status"

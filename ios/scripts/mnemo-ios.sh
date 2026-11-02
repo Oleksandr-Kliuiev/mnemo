@@ -30,6 +30,21 @@ export DEVELOPER_DIR="${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Develope
 export PATH="${NODE_DIR:+$NODE_DIR:}/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 export PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
+# The Personal Team of the Apple ID added in Xcode → Settings → Accounts (read when not configured).
+detect_team() {
+  defaults export com.apple.dt.Xcode - 2>/dev/null | /usr/bin/python3 -c '
+import plistlib, sys
+try:
+    d = plistlib.loads(sys.stdin.buffer.read())
+except Exception:
+    sys.exit(0)
+teams = [t for ts in d.get("IDEProvisioningTeamByIdentifier", {}).values() for t in ts]
+teams.sort(key=lambda t: not t.get("isFreeProvisioningTeam", False))
+print(teams[0]["teamID"] if teams else "")
+'
+}
+[ -z "$TEAM_ID" ] && TEAM_ID="$(detect_team)"
+
 DERIVED="$HOME_DIR/build"
 APP_PATH="$DERIVED/Build/Products/Release-iphoneos/App.app"
 
@@ -126,7 +141,7 @@ build_web() {
 }
 
 build_ios() {
-  [ -n "$TEAM_ID" ] || fail "не задан TEAM_ID в $CONFIG (запустите setup-automation.sh)"
+  [ -n "$TEAM_ID" ] || fail "в Xcode не добавлен Apple ID (Xcode → Settings → Accounts → «+»)"
   log "Собираю и подписываю iOS-приложение (команда $TEAM_ID)…"
   xcodebuild \
     -project "$REPO/ios/App/App.xcodeproj" \
@@ -184,6 +199,8 @@ backup_from_device() {
 
 install_app() {
   local dev="$1"
+  local first=0
+  [ -f "$STATE/expires_at" ] || first=1
   log "Устанавливаю на iPhone поверх текущей версии (данные сохраняются)…"
   xcrun devicectl device install app --device "$dev" "$APP_PATH" >>"$LOG" 2>&1 || fail "установка на iPhone не удалась — телефон разблокирован и в той же сети?"
   local exp
@@ -193,7 +210,11 @@ install_app() {
   local human
   human="$([ -n "$exp" ] && /bin/date -r "$exp" '+%d.%m %H:%M' || echo '?')"
   log "Готово. Подпись действует до $human"
-  notify "Приложение продлено" "Mnemo будет открываться до $human"
+  if [ "$first" = 1 ]; then
+    notify "Mnemo установлен на iPhone" "Один раз разрешите запуск: Настройки → Основные → VPN и управление устройством → ваш Apple ID → Доверять."
+  else
+    notify "Приложение продлено" "Mnemo будет открываться до $human"
+  fi
 }
 
 # ── Commands ─────────────────────────────────────────────────────────────────
@@ -214,11 +235,27 @@ cmd_install() {
   install_app "$dev"
 }
 
+# At most one reminder of a kind per 20 hours.
+remind() {
+  local key="$STATE/notified_$1" last now
+  now="$(date '+%s')"
+  last="$(cat "$key" 2>/dev/null || echo 0)"
+  [ $((now - last)) -lt 72000 ] && return 0
+  echo "$now" >"$key"
+  notify "$2" "$3"
+}
+
 cmd_auto() {
   local now exp left
   now="$(date '+%s')"
   exp="$(cat "$STATE/expires_at" 2>/dev/null || echo 0)"
   left=$((exp - now))
+  if [ -z "$TEAM_ID" ]; then
+    trim_log
+    log "В Xcode нет Apple ID — жду настройки"
+    [ "$exp" -gt 0 ] && remind team "Нужен Apple ID" "Добавьте его в Xcode → Settings → Accounts, иначе Mnemo не продлится."
+    exit 0
+  fi
   if [ "$left" -gt $((RENEW_BEFORE_HOURS * 3600)) ]; then
     trim_log
     log "Подпись ещё действует $((left / 3600)) ч — продлевать рано"
@@ -229,7 +266,7 @@ cmd_auto() {
     if [ "$exp" -gt 0 ] && [ "$left" -lt $((24 * 3600)) ]; then
       local when
       when="$( [ "$left" -gt 0 ] && echo "через $((left / 3600)) ч" || echo 'уже' )"
-      notify "Нужен iPhone" "Mnemo перестанет открываться $when. Подключите iPhone к Mac или к той же Wi-Fi сети и разблокируйте."
+      remind device "Нужен iPhone" "Mnemo перестанет открываться $when. Подключите iPhone к Mac или к той же Wi-Fi сети и разблокируйте."
     fi
     exit 0
   fi

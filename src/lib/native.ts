@@ -50,6 +50,11 @@ async function prune(): Promise<void> {
   }
 }
 
+/** Native app: write a backup into Files → On My iPhone → Mnemo → Backups. */
+export async function saveBackupToFiles(blob: Blob, name: string): Promise<void> {
+  await writeBlob(`${BACKUP_DIR}/${name}`, blob)
+}
+
 export interface AutoBackupStatus {
   lastAt: number
   files: number
