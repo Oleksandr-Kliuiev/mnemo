@@ -79,7 +79,8 @@ for d in data.get('result', {}).get('devices', []):
     hw = d.get('hardwareProperties', {})
     props = d.get('deviceProperties', {})
     conn = d.get('connectionProperties', {})
-    if hw.get('platform') != 'iOS' or hw.get('reality') == 'virtual':
+    # Physical iPhones only: simulators report reality "simulated".
+    if hw.get('platform') != 'iOS' or hw.get('reality') in ('simulated', 'virtual'):
         continue
     ids = {str(d.get('identifier', '')).lower(), str(hw.get('udid', '')).lower(), str(props.get('name', '')).lower()}
     if want and want not in ids:

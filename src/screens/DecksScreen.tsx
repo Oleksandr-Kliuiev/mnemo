@@ -11,6 +11,7 @@ import { createDemoDecks } from '../data/demo'
 import { href, navigate } from '../lib/router'
 import { CARDS, count, DAYS, plural } from '../lib/format'
 import { isIOS, isStandalone } from '../lib/platform'
+import { isNative } from '../lib/native'
 import { db, requestPersistentStorage } from '../db/db'
 import { useLiveQuery } from 'dexie-react-hooks'
 
@@ -37,7 +38,7 @@ export function useNewDeckFlow() {
 function InstallBanner() {
   const [hidden, setHidden] = useState(true)
   useEffect(() => {
-    if (!isIOS() || isStandalone()) return
+    if (!isIOS() || isStandalone() || isNative()) return
     void getMeta('installBannerHidden', false).then((h) => setHidden(h))
   }, [])
   if (hidden) return null

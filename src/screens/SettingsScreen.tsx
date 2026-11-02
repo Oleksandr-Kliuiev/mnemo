@@ -243,7 +243,15 @@ export default function SettingsScreen() {
         </div>
       </Section>
 
-      <Section title="Данные" id="backup" footer="Карточки хранятся только на этом устройстве. Сохраняйте копию в «Файлы» или iCloud Drive — из неё можно восстановить всё на другом устройстве.">
+      <Section
+        title="Данные"
+        id="backup"
+        footer={
+          native
+            ? 'Карточки хранятся в приложении на этом iPhone. Автокопии лежат в «Файлах»; перед каждым продлением Mac забирает их к себе.'
+            : 'Карточки хранятся только на этом устройстве. Сохраняйте копию в «Файлы» или iCloud Drive — из неё можно восстановить всё на другом устройстве.'
+        }
+      >
         <div className="group">
           <ButtonRow
             onClick={() => void backup()}
@@ -385,7 +393,7 @@ export default function SettingsScreen() {
       <Section title="Дополнительно">
         <div className="group">
           <LinkRow to="/settings/notetypes" icon={<Layers size={18} />} iconColor="#BF5AF2" title="Типы записей" sub="Поля, шаблоны карточек и оформление" />
-          <LinkRow to="/install" icon={<Smartphone size={18} />} iconColor="#0A84FF" title="Установка на iPhone" />
+          {!native && <LinkRow to="/install" icon={<Smartphone size={18} />} iconColor="#0A84FF" title="Установка на iPhone" />}
           <StaticRow icon={<Brain size={18} />} iconColor="#FF375F" title="Алгоритм" value="FSRS-6" />
           <StaticRow icon={<Info size={18} />} iconColor="#8E8E93" title="Версия" value={__APP_VERSION__} />
         </div>
