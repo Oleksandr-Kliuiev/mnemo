@@ -62,10 +62,16 @@ export async function putMediaFile(name: string, data: Blob | Uint8Array): Promi
   }
 }
 
-/** Object URL for a stored media file (cached), or null when missing. */
+const MAX_URLS = 300
+
+/** Object URL for a stored media file (cached, least recently used are released), or null when missing. */
 export function mediaUrl(name: string): Promise<string | null> {
   const hit = urlCache.get(name)
-  if (hit) return Promise.resolve(hit)
+  if (hit) {
+    urlCache.delete(name)
+    urlCache.set(name, hit)
+    return Promise.resolve(hit)
+  }
   let p = pending.get(name)
   if (!p) {
     p = db.media.get(name).then((m) => {
@@ -73,6 +79,13 @@ export function mediaUrl(name: string): Promise<string | null> {
       if (!m) return null
       const url = URL.createObjectURL(m.blob)
       urlCache.set(name, url)
+      if (urlCache.size > MAX_URLS) {
+        // Release the oldest URLs; the current card's images were just touched and stay.
+        for (const [k, v] of [...urlCache].slice(0, urlCache.size - MAX_URLS)) {
+          URL.revokeObjectURL(v)
+          urlCache.delete(k)
+        }
+      }
       return url
     })
     pending.set(name, p)

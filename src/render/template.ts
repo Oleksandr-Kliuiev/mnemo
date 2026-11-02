@@ -235,3 +235,11 @@ export function cardOrdinals(
   })
   return out
 }
+
+/** Rename field references in a template in one pass, so swaps and chains work. */
+export function renameFieldRefs(src: string, renames: Map<string, string>): string {
+  if (renames.size === 0) return src
+  return src.replace(/\{\{([#^/]?)((?:[^}:]*:)*)\s*([^}:]*?)\s*\}\}/g, (m, mark: string, filters: string, field: string) =>
+    renames.has(field) ? `{{${mark}${filters}${renames.get(field)}}}` : m,
+  )
+}

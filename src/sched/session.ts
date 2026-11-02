@@ -1,6 +1,6 @@
 import { db } from '../db/db'
 import { getSettings } from '../db/settings'
-import { CardState, type Card, type Deck, type ReviewEntry, type Settings } from '../db/types'
+import { CardState, type Card, type Deck, type Grade, type ReviewEntry, type Settings } from '../db/types'
 import { DECK_SEP, isInSubtree } from '../db/repo'
 import { dayIndex, DAY_MS } from './day'
 import { finalizeOutcome, previewAnswers, schedConfig, type AnswerOutcome, type AnswerPreview, type SchedConfig } from './fsrs'
@@ -27,6 +27,12 @@ export type NextResult =
   | { type: 'wait'; until: number; count: number }
   | { type: 'done' }
 
+/** A sibling hidden by an action, and the queue it was taken from (null = it was not queued). */
+interface Buried {
+  id: number
+  from: QueueKind | null
+}
+
 type HistoryEntry =
   | {
       kind: 'answer'
@@ -34,11 +40,13 @@ type HistoryEntry =
       after: Card
       from: QueueKind
       revId: number
-      buried: number[]
+      buried: Buried[]
       leechTagged: boolean
-      leechSuspended: boolean
+      grade: Grade
+      durationMs: number
+      wasNew: boolean
     }
-  | { kind: 'bury' | 'suspend'; card: Card; from: QueueKind; siblings: number[] }
+  | { kind: 'bury' | 'suspend'; card: Card; from: QueueKind; buried: Buried[] }
 
 export interface SessionStats {
   answered: number
@@ -46,6 +54,22 @@ export interface SessionStats {
   timeMs: number
   newSeen: number
 }
+
+/** Fields an answer changes; everything else is taken from the row in the database. */
+const SCHEDULING_FIELDS = [
+  'state',
+  'due',
+  'stability',
+  'difficulty',
+  'scheduledDays',
+  'learningSteps',
+  'reps',
+  'lapses',
+  'lastReview',
+  'modifiedAt',
+] as const
+
+const MAX_ANSWER_MS = 5 * 60_000
 
 /** Learning cards with steps of a day or more are scheduled by day, like reviews. */
 function isInterday(c: Card): boolean {
@@ -90,6 +114,11 @@ export class StudySession {
     return this.history.length > 0
   }
 
+  /** True when the study day changed since the queues were built (e.g. past 04:00). */
+  isStale(now = Date.now()): boolean {
+    return dayIndex(now, this.settings.dayCutoff) !== this.today
+  }
+
   config(deckId: number): SchedConfig {
     let cfg = this.cfgCache.get(deckId)
     if (!cfg) {
@@ -116,7 +145,7 @@ export class StudySession {
 
     const cards = await db.cards.where('deckId').anyOf([...this.deckIds]).toArray()
     const revToday = await db.revlog.where('day').equals(this.today).toArray()
-    const { newQ, reviewQ, learnQ } = buildQueues(inScope, cards, revToday, this.today, this.settings.dayCutoff, this.opts, root?.id ?? null)
+    const { newQ, reviewQ, learnQ } = buildQueues(inScope, cards, revToday, this.today, this.settings.dayCutoff, this.opts, root?.id ?? null, this.settings.burySiblings)
     this.newQ = newQ
     this.reviewQ = reviewQ
     this.learnQ = learnQ
@@ -124,6 +153,7 @@ export class StudySession {
     this.totalReview = reviewQ.length
     this.shownNew = 0
     this.shownReview = 0
+    this.forced = null
   }
 
   counts(now = Date.now()): QueueCounts {
@@ -218,22 +248,27 @@ export class StudySession {
   async answer(card: Card, outcome: AnswerOutcome, durationMs: number, now = Date.now()): Promise<{ leech: boolean }> {
     const cfg = this.config(card.deckId)
     const final = finalizeOutcome(outcome, now, cfg)
-    const updated = final.card
     const threshold = Math.max(1, this.settings.leechThreshold)
     const lapsed = card.state === CardState.Review && outcome.grade === 1
     const leech =
-      lapsed && updated.lapses >= threshold && (updated.lapses - threshold) % Math.max(1, Math.floor(threshold / 2)) === 0
+      lapsed && final.card.lapses >= threshold && (final.card.lapses - threshold) % Math.max(1, Math.floor(threshold / 2)) === 0
     const siblings = await this.siblingsToBury(card)
+    const duration = Math.min(Math.max(0, durationMs), MAX_ANSWER_MS)
     let leechTagged = false
-    let leechSuspended = false
     let revId = 0
+    let before: Card = card
+    let written: Card = final.card
     await db.transaction('rw', db.cards, db.revlog, db.notes, async () => {
-      if (leech && this.settings.leechAction === 'suspend') {
-        updated.suspended = 1
-        leechSuspended = true
-      }
-      await db.cards.put(updated)
-      const entry: ReviewEntry = { ...final.entry, durationMs: Math.min(durationMs, 60_000 * 5) }
+      // Start from the stored row: a flag, deck move or suspension made while the card
+      // was on screen must survive the answer. Only scheduling fields are replaced.
+      const fresh = await db.cards.get(card.id)
+      if (!fresh) throw new Error('Карточка была удалена')
+      before = fresh
+      written = { ...fresh }
+      for (const k of SCHEDULING_FIELDS) (written as unknown as Record<string, unknown>)[k] = final.card[k]
+      if (leech && this.settings.leechAction === 'suspend') written.suspended = 1
+      await db.cards.put(written)
+      const entry: ReviewEntry = { ...final.entry, deckId: fresh.deckId, durationMs: duration }
       revId = (await db.revlog.add(entry)) as number
       if (siblings.length) {
         await db.cards.where('id').anyOf(siblings.map((c) => c.id)).modify({ buriedDay: this.today })
@@ -247,33 +282,26 @@ export class StudySession {
       }
     })
     const from = this.removeFromQueues(card.id) ?? 'learn'
-    for (const s of siblings) this.removeFromQueues(s.id)
+    const buried = siblings.map((s) => ({ id: s.id, from: this.removeFromQueues(s.id) }))
     if (from === 'new') this.shownNew++
     if (from === 'review') this.shownReview++
     if (
-      !updated.suspended &&
-      (updated.state === CardState.Learning || updated.state === CardState.Relearning) &&
-      !isInterday(updated) &&
-      dayIndex(updated.due, this.settings.dayCutoff) <= this.today
+      !written.suspended &&
+      this.deckIds.has(written.deckId) &&
+      (written.state === CardState.Learning || written.state === CardState.Relearning) &&
+      !isInterday(written) &&
+      dayIndex(written.due, this.settings.dayCutoff) <= this.today
     ) {
-      this.learnQ.push(updated)
+      this.learnQ.push(written)
       this.learnQ.sort((a, b) => a.due - b.due)
     }
-    this.history.push({
-      kind: 'answer',
-      before: card,
-      after: updated,
-      from,
-      revId,
-      buried: siblings.map((s) => s.id),
-      leechTagged,
-      leechSuspended,
-    })
+    const wasNew = before.state === CardState.New
+    this.history.push({ kind: 'answer', before, after: written, from, revId, buried, leechTagged, grade: outcome.grade, durationMs: duration, wasNew })
     this.lastCardId = card.id
     this.stats.answered++
-    this.stats.timeMs += Math.min(durationMs, 60_000 * 5)
+    this.stats.timeMs += duration
     if (outcome.grade === 1) this.stats.again++
-    if (card.state === CardState.New) this.stats.newSeen++
+    if (wasNew) this.stats.newSeen++
     return { leech }
   }
 
@@ -283,20 +311,28 @@ export class StudySession {
     const ids = [card.id, ...siblings.map((s) => s.id)]
     await db.cards.where('id').anyOf(ids).modify({ buriedDay: this.today })
     const from = this.removeFromQueues(card.id) ?? 'learn'
-    for (const s of siblings) this.removeFromQueues(s.id)
-    this.history.push({ kind: 'bury', card, from, siblings: siblings.map((s) => s.id) })
+    const buried = siblings.map((s) => ({ id: s.id, from: this.removeFromQueues(s.id) }))
+    this.history.push({ kind: 'bury', card, from, buried })
   }
 
   async suspend(card: Card): Promise<void> {
     await db.cards.update(card.id, { suspended: 1 })
     const from = this.removeFromQueues(card.id) ?? 'learn'
-    this.history.push({ kind: 'suspend', card, from, siblings: [] })
+    this.history.push({ kind: 'suspend', card, from, buried: [] })
   }
 
   /** Drop a card from the session (e.g. deleted while studying). */
   forget(cardId: number): void {
     this.removeFromQueues(cardId)
     this.history = this.history.filter((h) => (h.kind === 'answer' ? h.before.id : h.card.id) !== cardId)
+  }
+
+  /** Drop every card of a deleted note from the queues and the undo history. */
+  forgetNote(noteId: number): void {
+    for (const q of [this.newQ, this.reviewQ, this.learnQ]) {
+      for (let i = q.length - 1; i >= 0; i--) if (q[i].noteId === noteId) q.splice(i, 1)
+    }
+    this.history = this.history.filter((h) => (h.kind === 'answer' ? h.before.noteId : h.card.noteId) !== noteId)
   }
 
   /** Replace the in-memory copy after an edit (deck change etc.). */
@@ -311,11 +347,17 @@ export class StudySession {
   async undo(): Promise<Card | null> {
     const h = this.history.pop()
     if (!h) return null
+    const card = h.kind === 'answer' ? h.before : h.card
+    // The note may have been deleted since (e.g. from the editor): never resurrect its cards.
+    if (!(await db.notes.get(card.noteId))) {
+      this.forgetNote(card.noteId)
+      return this.undo()
+    }
     if (h.kind === 'answer') {
       await db.transaction('rw', db.cards, db.revlog, db.notes, async () => {
         await db.cards.put(h.before)
         await db.revlog.delete(h.revId)
-        if (h.buried.length) await db.cards.where('id').anyOf(h.buried).modify({ buriedDay: 0 })
+        if (h.buried.length) await db.cards.where('id').anyOf(h.buried.map((b) => b.id)).modify({ buriedDay: 0 })
         if (h.leechTagged) {
           const note = await db.notes.get(h.before.noteId)
           if (note) {
@@ -327,11 +369,13 @@ export class StudySession {
         }
       })
       this.removeFromQueues(h.after.id)
-      await this.restoreSiblings(h.buried)
+      await this.restoreBuried(h.buried)
       if (h.from === 'new') this.shownNew = Math.max(0, this.shownNew - 1)
       if (h.from === 'review') this.shownReview = Math.max(0, this.shownReview - 1)
       this.stats.answered = Math.max(0, this.stats.answered - 1)
-      if (h.after.lapses > h.before.lapses || h.after.state === CardState.Relearning) this.stats.again = Math.max(0, this.stats.again - 1)
+      this.stats.timeMs = Math.max(0, this.stats.timeMs - h.durationMs)
+      if (h.grade === 1) this.stats.again = Math.max(0, this.stats.again - 1)
+      if (h.wasNew) this.stats.newSeen = Math.max(0, this.stats.newSeen - 1)
       this.putBack(h.before, h.from)
       this.forced = { card: h.before, kind: h.from }
       this.lastCardId = null
@@ -339,12 +383,12 @@ export class StudySession {
     }
     const restore: Partial<Card> = h.kind === 'bury' ? { buriedDay: 0 } : { suspended: 0 }
     await db.cards.update(h.card.id, restore)
-    if (h.siblings.length) await db.cards.where('id').anyOf(h.siblings).modify({ buriedDay: 0 })
-    await this.restoreSiblings(h.siblings)
-    const card = { ...h.card, ...restore }
-    this.putBack(card, h.from)
-    this.forced = { card, kind: h.from }
-    return card
+    if (h.buried.length) await db.cards.where('id').anyOf(h.buried.map((b) => b.id)).modify({ buriedDay: 0 })
+    await this.restoreBuried(h.buried)
+    const fresh = { ...((await db.cards.get(h.card.id)) ?? h.card), ...restore }
+    this.putBack(fresh, h.from)
+    this.forced = { card: fresh, kind: h.from }
+    return fresh
   }
 
   private putBack(card: Card, from: QueueKind) {
@@ -356,19 +400,27 @@ export class StudySession {
     }
   }
 
-  private async restoreSiblings(ids: number[]) {
-    if (!ids.length) return
-    const cards = (await db.cards.bulkGet(ids)).filter(Boolean) as Card[]
-    for (const c of cards) {
-      if (c.state === CardState.New) this.newQ.push(c)
-      else if (c.state === CardState.Review) this.reviewQ.push(c)
-    }
+  /** Put buried siblings back only into the queues they were taken from. */
+  private async restoreBuried(list: Buried[]) {
+    const queued = list.filter((b) => b.from != null)
+    if (!queued.length) return
+    const cards = await db.cards.bulkGet(queued.map((b) => b.id))
+    queued.forEach((b, i) => {
+      const c = cards[i]
+      if (!c || c.suspended) return
+      if (b.from === 'new') this.newQ.push(c)
+      else if (b.from === 'review') this.reviewQ.push(c)
+      else this.learnQ.push(c)
+    })
+    this.learnQ.sort((a, b) => a.due - b.due)
   }
 }
 
 /**
  * Build today's queues. Limits apply per deck to the whole subtree (like Anki's v3 scheduler):
  * a card is taken only if its deck and every ancestor in scope still have room.
+ * With sibling burying on, a note contributes at most one new/review card per day,
+ * so the counts match what the session will really show.
  */
 export function buildQueues(
   decksInScope: Deck[],
@@ -378,6 +430,7 @@ export function buildQueues(
   cutoff: number,
   opts: SessionOptions,
   rootId: number | null,
+  burySiblings = true,
 ): { newQ: Card[]; reviewQ: Card[]; learnQ: Card[] } {
   const byName = new Map(decksInScope.map((d) => [d.name, d]))
   const ancestors = (d: Deck): Deck[] => {
@@ -450,6 +503,7 @@ export function buildQueues(
     }
   }
 
+  const usedNotes = new Set<number>()
   const take = (pool: Map<number, Card[]>, remaining: Map<number, number>): Card[] => {
     const out: Card[] = []
     for (const d of decksInScope) {
@@ -458,6 +512,9 @@ export function buildQueues(
       const chain = ancestors(d)
       for (const c of arr) {
         if (chain.some((a) => (remaining.get(a.id) ?? 0) <= 0)) break
+        // A sibling would be buried as soon as its partner is answered: skip it without using the limit.
+        if (burySiblings && usedNotes.has(c.noteId)) continue
+        usedNotes.add(c.noteId)
         out.push(c)
         for (const a of chain) remaining.set(a.id, (remaining.get(a.id) ?? 0) - 1)
       }
@@ -475,8 +532,9 @@ export function buildQueues(
     shuffle(arr)
     arr.sort((a, b) => dayOf(a) - dayOf(b))
   }
-  const newQ = take(newBy, remainingNew)
+  // Reviews first, as in Anki: a note due for review keeps its new siblings for another day.
   const reviewQ = take(revBy, remainingRev)
+  const newQ = take(newBy, remainingNew)
   // Interleave decks: reviews sorted globally by due day, stable random within a day.
   reviewQ.sort((a, b) => dayOf(a) - dayOf(b))
   learnQ.sort((a, b) => a.due - b.due)

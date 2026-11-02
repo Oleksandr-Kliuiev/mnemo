@@ -39,13 +39,7 @@
     <link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: light)" href="splash/splash-750x1334-light.png" />
     <link rel="apple-touch-startup-image" media="(device-width: 375px) and (device-height: 667px) and (-webkit-device-pixel-ratio: 2) and (orientation: portrait) and (prefers-color-scheme: dark)" href="splash/splash-750x1334-dark.png" />
     <!-- splash:end -->
-    <script>
-      // Apply the saved theme before first paint to avoid a flash of the wrong theme.
-      try {
-        var t = localStorage.getItem('mnemo-theme')
-        if (t === 'light' || t === 'dark') document.documentElement.setAttribute('data-theme', t)
-      } catch (e) {}
-    </script>
+    <script src="theme-init.js"></script>
   </head>
   <body>
     <div id="root"></div>

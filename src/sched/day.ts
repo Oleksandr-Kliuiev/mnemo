@@ -2,16 +2,26 @@
  * Study days. Like Anki, a "day" starts at a configurable hour (default 04:00 local time),
  * so a late-night session still counts towards the previous day.
  * A day is identified by an integer: days since 1970-01-01 of the local calendar date.
+ * Everything here works on wall-clock time, so DST changes never shift a day boundary.
  */
 
 const DAY_MS = 86_400_000
 
 export function dayIndex(ms: number, cutoffHour: number): number {
-  const d = new Date(ms - cutoffHour * 3_600_000)
-  return Math.floor(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()) / DAY_MS)
+  const d = new Date(ms)
+  let y = d.getFullYear()
+  let m = d.getMonth()
+  let day = d.getDate()
+  if (d.getHours() < cutoffHour) {
+    const prev = new Date(y, m, day - 1)
+    y = prev.getFullYear()
+    m = prev.getMonth()
+    day = prev.getDate()
+  }
+  return Math.floor(Date.UTC(y, m, day) / DAY_MS)
 }
 
-/** Epoch ms at which the given study day starts. */
+/** Epoch ms at which the given study day starts (wall-clock cutoff hour). */
 export function dayStart(day: number, cutoffHour: number): number {
   const d = new Date(day * DAY_MS)
   return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), cutoffHour).getTime()

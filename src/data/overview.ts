@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { db } from '../db/db'
 import { getSettings } from '../db/settings'
@@ -82,7 +83,7 @@ export async function loadOverview(now = Date.now()): Promise<Overview> {
   for (const d of decks) {
     const sub = decks.filter((x) => isInSubtree(x.name, d.name))
     const subCards = sub.flatMap((x) => cardsByDeck.get(x.id) ?? [])
-    const q = buildQueues(sub, subCards, revToday, today, settings.dayCutoff, { rootDeckId: d.id }, d.id)
+    const q = buildQueues(sub, subCards, revToday, today, settings.dayCutoff, { rootDeckId: d.id }, d.id, settings.burySiblings)
     const node = byId.get(d.id)!
     node.counts = { new: q.newQ.length, learn: learnCount(q.learnQ, now, settings.learnAheadMin), review: q.reviewQ.length }
     node.total = subCards.length
@@ -120,8 +121,29 @@ export async function loadOverview(now = Date.now()): Promise<Overview> {
   }
 }
 
+/**
+ * Changes when the counts may have changed without a database write: every minute while the
+ * app is visible (learning cards become due, a new study day starts) and when it comes back.
+ */
+export function useClockTick(): number {
+  const [tick, setTick] = useState(0)
+  useEffect(() => {
+    const bump = () => document.visibilityState === 'visible' && setTick((t) => t + 1)
+    const id = window.setInterval(bump, 60_000)
+    document.addEventListener('visibilitychange', bump)
+    window.addEventListener('focus', bump)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', bump)
+      window.removeEventListener('focus', bump)
+    }
+  }, [])
+  return tick
+}
+
 export function useOverview(): Overview | undefined {
-  return useLiveQuery(() => loadOverview(), [])
+  const tick = useClockTick()
+  return useLiveQuery(() => loadOverview(), [tick])
 }
 
 /** Rough minutes for the remaining work: a new card is seen about three times on its first day. */

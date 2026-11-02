@@ -11,6 +11,7 @@ import { deleteNoteType, saveNoteType, type EditedField, type EditedTemplate } f
 import { useSettings } from '../db/settings'
 import type { Note, NoteType } from '../db/types'
 import { renderCard } from '../render/card'
+import { renameFieldRefs } from '../render/template'
 import { goBack, navigate } from '../lib/router'
 import { useIsDark } from '../lib/theme'
 import { CARDS, count, NOTES } from '../lib/format'
@@ -83,16 +84,14 @@ function Editor({ type, sample, total }: { type: NoteType; sample: Note | null; 
     }
     setSaving(true)
     try {
-      // Renamed fields: update their references in the templates, like Anki does.
-      let tpls = templates
+      // Renamed fields: update their references in the templates in one pass (swaps and chains included).
+      const renames = new Map<string, string>()
       for (const f of fields) {
         const oldName = f.origin != null ? type.fields[f.origin]?.name : undefined
-        const newName = f.name.trim()
-        if (!oldName || oldName === newName) continue
-        const esc = oldName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
-        const re = new RegExp(`\\{\\{([#^/]?)((?:[^}:]*:)*)\\s*${esc}\\s*\\}\\}`, 'g')
-        tpls = tpls.map((t) => ({ ...t, qfmt: t.qfmt.replace(re, `{{$1$2${newName}}}`), afmt: t.afmt.replace(re, `{{$1$2${newName}}}`) }))
+        if (oldName && oldName !== f.name.trim()) renames.set(oldName, f.name.trim())
       }
+      const rename = (src: string) => renameFieldRefs(src, renames)
+      const tpls = templates.map((t) => ({ ...t, qfmt: rename(t.qfmt), afmt: rename(t.afmt) }))
       const res = await saveNoteType(type.id, { name, css, fields, templates: tpls })
       setDirty(false)
       const extra = [res.cardsAdded ? `новых карточек: ${res.cardsAdded}` : '', res.cardsRemoved ? `удалено: ${count(res.cardsRemoved, CARDS)}` : ''].filter(Boolean).join(', ')

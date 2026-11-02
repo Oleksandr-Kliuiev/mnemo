@@ -61,6 +61,7 @@ function useEditor(noteId: number | undefined, initialDeckId: number | undefined
   const isNew = noteId == null
   const [typeId, setTypeId] = useState<number | null>(null)
   const [deckId, setDeckId] = useState<number | null>(null)
+  const [deckTouched, setDeckTouched] = useState(false)
   const [fields, setFields] = useState<string[]>([])
   const [tags, setTags] = useState<string[]>([])
   const [sticky, setSticky] = useState<boolean[]>([])
@@ -149,8 +150,10 @@ function useEditor(noteId: number | undefined, initialDeckId: number | undefined
     type,
     typeId,
     deckId,
+    deckTouched,
     setDeckId: (id: number) => {
       setDeckId(id)
+      setDeckTouched(true)
       setDirty(true)
     },
     changeType,
@@ -206,9 +209,12 @@ function useSave(ed: Editor, noteId: number | undefined, onSaved: (kind: 'added'
         onSaved('added')
       } else {
         const added = await updateNote(noteId, vals, ed.tags, deckId)
-        const cards = await db.cards.where('noteId').equals(noteId).toArray()
-        const moved = cards.filter((c) => c.deckId !== deckId).map((c) => c.id)
-        if (moved.length) await moveCards(moved, deckId)
+        // Cards of one note may live in different decks: move them only when the user picked a deck.
+        if (ed.deckTouched) {
+          const cards = await db.cards.where('noteId').equals(noteId).toArray()
+          const moved = cards.filter((c) => c.deckId !== deckId).map((c) => c.id)
+          if (moved.length) await moveCards(moved, deckId)
+        }
         ed.setDirty(false)
         toast.show(added ? `Сохранено, новых карточек: ${added}` : 'Сохранено')
         onSaved('saved')

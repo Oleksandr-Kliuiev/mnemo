@@ -22,7 +22,12 @@ export interface SchedConfig {
 
 const STEP_RE = /^(\d+(?:\.\d+)?)([mhd]?)$/i
 
-/** Parse "1m 10m", "1 10", "30m 1h 1d". Bare numbers are minutes. Returns null when invalid. */
+const UNIT_MINUTES: Record<string, number> = { m: 1, h: 60, d: 1440 }
+
+/**
+ * Parse "1m 10m", "1 10", "30m 1h 1d". Bare numbers are minutes. Returns null when invalid.
+ * ts-fsrs reads steps with parseInt, so fractions are normalised to whole minutes here.
+ */
 export function parseSteps(text: string): StepUnit[] | null {
   const parts = text.trim().split(/[\s,]+/).filter(Boolean)
   const out: StepUnit[] = []
@@ -30,8 +35,10 @@ export function parseSteps(text: string): StepUnit[] | null {
     const m = STEP_RE.exec(p)
     if (!m) return null
     const n = Number(m[1])
-    if (!(n > 0)) return null
-    out.push(`${n}${(m[2] || 'm').toLowerCase()}` as StepUnit)
+    const unit = (m[2] || 'm').toLowerCase()
+    const minutes = n * UNIT_MINUTES[unit]
+    if (!(minutes >= 1)) return null
+    out.push((Number.isInteger(n) ? `${n}${unit}` : `${Math.round(minutes)}m`) as StepUnit)
   }
   return out
 }
@@ -78,7 +85,10 @@ function scheduler(cfg: SchedConfig): FSRS {
   return f
 }
 
-function toF(card: Card, cutoff: number): FCard {
+function toF(card: Card, cutoff: number, now: number): FCard {
+  // A review "in the future" (clock moved back, backup from a device that was ahead)
+  // would give ts-fsrs a negative elapsed time and make it throw.
+  const last = card.lastReview != null ? Math.min(card.lastReview, now) : null
   return {
     due: new Date(toStudyFrame(card.due, cutoff)),
     stability: card.stability,
@@ -89,15 +99,18 @@ function toF(card: Card, cutoff: number): FCard {
     reps: card.reps,
     lapses: card.lapses,
     state: card.state,
-    last_review: card.lastReview != null ? new Date(toStudyFrame(card.lastReview, cutoff)) : undefined,
+    last_review: last != null ? new Date(toStudyFrame(last, cutoff)) : undefined,
   }
 }
 
-function fromF(base: Card, fc: FCard, now: number, cutoff: number): Card {
+function fromF(base: Card, fc: FCard, now: number, frameNow: number, cutoff: number): Card {
+  // Steps within a day are real durations (a DST change must not turn 10 min into 70);
+  // intervals in days land on the same wall-clock time N days later.
+  const due = fc.scheduled_days === 0 ? now + (fc.due.getTime() - frameNow) : fromStudyFrame(fc.due.getTime(), cutoff)
   return {
     ...base,
     state: fc.state as CardState,
-    due: fromStudyFrame(fc.due.getTime(), cutoff),
+    due,
     stability: fc.stability,
     difficulty: fc.difficulty,
     scheduledDays: fc.scheduled_days,
@@ -124,14 +137,14 @@ const GRADES: Grade[] = [1, 2, 3, 4]
 
 export function previewAnswers(card: Card, now: number, cfg: SchedConfig): AnswerPreview {
   const f = scheduler(cfg)
-  const fnow = new Date(toStudyFrame(now, cfg.cutoff))
-  const preview = f.repeat(toF(card, cfg.cutoff), fnow)
+  const frameNow = toStudyFrame(now, cfg.cutoff)
+  const preview = f.repeat(toF(card, cfg.cutoff, now), new Date(frameNow))
   const today = dayIndex(now, cfg.cutoff)
   const elapsedDays = card.lastReview != null ? Math.max(0, today - dayIndex(card.lastReview, cfg.cutoff)) : 0
   const out = {} as AnswerPreview
   for (const g of GRADES) {
     const item = preview[g]
-    const next = fromF(card, item.card, now, cfg.cutoff)
+    const next = fromF(card, item.card, now, frameNow, cfg.cutoff)
     const intervalMs = Math.max(0, next.due - now)
     out[g] = {
       grade: g,

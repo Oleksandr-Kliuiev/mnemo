@@ -138,3 +138,22 @@ describe('field sanitizing', () => {
     expect(html).not.toContain('javascript:')
   })
 })
+
+describe('review fixes', () => {
+  it('renames fields in one pass (swaps work)', async () => {
+    const { renameFieldRefs } = await import('./template')
+    const map = new Map([['Front', 'Back'], ['Back', 'Front']])
+    expect(renameFieldRefs('{{Front}}<hr id=answer>{{type:Back}}{{#Front}}x{{/Front}}', map)).toBe('{{Back}}<hr id=answer>{{type:Front}}{{#Back}}x{{/Back}}')
+  })
+  it('sound tags inside attributes cannot inject markup', () => {
+    const basic = { ...BUILTIN_NOTE_TYPES[0], id: 2, createdAt: 0, updatedAt: 0 } as NoteType
+    const evil = { id: 1, typeId: 2, guid: 'g', fields: ['<span title="[sound:x&quot;&gt;&lt;img src=x onerror=alert(1)&gt;.mp3]">t</span>', 'A'], tags: [], searchText: '', createdAt: 0, updatedAt: 0 } as Note
+    const r = renderCard(basic, evil, { ord: 0, flag: 0 }, 'D')
+    const div = document.createElement('div')
+    div.innerHTML = r.question
+    // The payload may survive as inert attribute text, but never as an element or a handler.
+    expect(div.querySelector('img')).toBeNull()
+    const handlers = [...div.querySelectorAll('*')].flatMap((el) => [...el.attributes].map((a) => a.name)).filter((n) => n.startsWith('on'))
+    expect(handlers).toEqual([])
+  })
+})

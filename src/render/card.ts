@@ -68,8 +68,12 @@ export function renderCard(
   const expected = q.typeExpected ?? a.typeExpected
   const qHtml = q.html.replaceAll(TYPE_MARKER, TYPE_INPUT)
   const aHtml = a.html.replaceAll(TYPE_MARKER, expected != null ? compareTypeAnswer(typed ?? '', expected) : '')
-  const qs = processSounds(sanitizeCardHtml(qHtml))
-  const as = processSounds(sanitizeCardHtml(aHtml))
+  // Sound tags become buttons first, then everything is sanitized: markup inserted after
+  // sanitizing could break out of an attribute that happened to contain a [sound:] tag.
+  const qs = processSounds(qHtml)
+  const as = processSounds(aHtml)
+  qs.html = sanitizeCardHtml(qs.html)
+  as.html = sanitizeCardHtml(as.html)
   // Sounds already heard on the question side are not replayed with the answer.
   const qCount = new Map<string, number>()
   for (const s of qs.sounds) qCount.set(s, (qCount.get(s) ?? 0) + 1)

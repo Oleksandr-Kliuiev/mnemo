@@ -60,3 +60,37 @@ describe('study days', () => {
     expect(fromStudyFrame(toStudyFrame(now, 4), 4)).toBe(now)
   })
 })
+
+describe('review fixes', () => {
+  it('normalises fractional steps to whole minutes and rejects sub-minute ones', () => {
+    expect(parseSteps('1.5h')).toEqual(['90m'])
+    expect(parseSteps('0.5d')).toEqual(['720m'])
+    expect(parseSteps('0.5m 10m')).toBeNull()
+  })
+  it('does not throw when the last review is in the future', () => {
+    const card = { ...newCard(1, 1, 0, now, now), id: 1, state: 2 as const, stability: 10, difficulty: 5, scheduledDays: 10, reps: 3, lastReview: now + 3 * 86_400_000, due: now + 10 * 86_400_000 } as Card
+    expect(() => previewAnswers(card, now, cfg)).not.toThrow()
+  })
+})
+
+describe('DST', () => {
+  const zone = process.env.TZ
+  it('keeps study days on wall-clock time across DST changes', () => {
+    process.env.TZ = 'Europe/Berlin'
+    try {
+      // 29 March 2026: clocks go from 02:00 to 03:00.
+      const morning = new Date(2026, 2, 29, 4, 30).getTime()
+      expect(dayIndex(morning, 4)).toBe(Math.floor(Date.UTC(2026, 2, 29) / 86_400_000))
+      for (let d = Math.floor(Date.UTC(2026, 2, 20) / 86_400_000); d < Math.floor(Date.UTC(2026, 3, 5) / 86_400_000); d++) {
+        expect(dayIndex(dayStart(d, 4), 4)).toBe(d)
+      }
+      // A 10-minute learning step across the change stays 10 minutes.
+      const before = new Date(2026, 2, 29, 1, 55).getTime()
+      const card = { ...newCard(1, 1, 0, before, before), id: 1 } as Card
+      const p = previewAnswers(card, before, cfg)
+      expect(Math.round((p[3].card.due - before) / 60_000)).toBe(10)
+    } finally {
+      process.env.TZ = zone
+    }
+  })
+})

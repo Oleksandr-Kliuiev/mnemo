@@ -332,42 +332,66 @@ export async function saveNoteType(typeId: number, edit: NoteTypeEdit): Promise<
       sortField: Math.min(old.sortField, fields.length - 1),
       updatedAt: now,
     })
-    const fieldsChanged =
-      edit.fields.length !== old.fields.length || edit.fields.some((f, i) => f.origin !== i)
+    const fieldsChanged = edit.fields.length !== old.fields.length || edit.fields.some((f, i) => f.origin !== i)
     const ordMap = new Map<number, number>()
     templates.forEach((t, i) => t.origin != null && ordMap.set(t.origin, i))
-    const templatesChanged = templates.length !== old.templates.length || templates.some((t, i) => t.origin !== i)
+    const templatesChanged = templates.length !== old.templates.length || templates.some((t, i) => t.origin !== i || t.qfmt !== old.templates[i]?.qfmt)
     let cardsAdded = 0
     let cardsRemoved = 0
+    // Name/CSS-only edits touch no notes or cards (important for 30k-note collections).
+    if (!fieldsChanged && !templatesChanged) return { cardsAdded, cardsRemoved }
+
     const notes = await db.notes.where('typeId').equals(typeId).toArray()
-    for (const note of notes) {
-      let values = note.fields
-      if (fieldsChanged) {
-        values = edit.fields.map((f) => (f.origin != null ? (note.fields[f.origin] ?? '') : ''))
-        await db.notes.update(note.id, { fields: values, searchText: noteSearchText(values, note.tags), updatedAt: now })
+    if (fieldsChanged) {
+      for (const note of notes) {
+        note.fields = edit.fields.map((f) => (f.origin != null ? (note.fields[f.origin] ?? '') : ''))
+        note.searchText = noteSearchText(note.fields, note.tags)
+        note.updatedAt = now
       }
-      const cards = await db.cards.where('noteId').equals(note.id).toArray()
-      if (old.kind !== 'cloze' && templatesChanged) {
-        for (const c of cards) {
-          const next = ordMap.get(c.ord)
-          if (next == null) {
-            await db.cards.delete(c.id)
-            cardsRemoved++
-          } else if (next !== c.ord) {
-            await db.cards.update(c.id, { ord: next })
-          }
+      await db.notes.bulkPut(notes)
+    }
+    const cards = await db.cards.where('noteId').anyOf(notes.map((n) => n.id)).toArray()
+    const byNote = new Map<number, Card[]>()
+    for (const c of cards) {
+      let arr = byNote.get(c.noteId)
+      if (!arr) byNote.set(c.noteId, (arr = []))
+      arr.push(c)
+    }
+    const toDelete: number[] = []
+    const toPut: Card[] = []
+    const toAdd: Card[] = []
+    const fieldNames = fields.map((f) => f.name)
+    for (const note of notes) {
+      const own = byNote.get(note.id) ?? []
+      const kept: Card[] = []
+      for (const c of own) {
+        if (old.kind === 'cloze') {
+          kept.push(c)
+          continue
+        }
+        const next = ordMap.get(c.ord)
+        if (next == null) {
+          toDelete.push(c.id)
+          cardsRemoved++
+        } else {
+          if (next !== c.ord) toPut.push({ ...c, ord: next })
+          kept.push({ ...c, ord: next })
         }
       }
       // New templates (or templates that now render) get cards.
-      const have = new Set((await db.cards.where('noteId').equals(note.id).toArray()).map((c) => c.ord))
-      const want = cardOrdinals(old.kind, templates, fields.map((f) => f.name), values)
-      const deckId = cards[0]?.deckId
-      const missing = want.filter((o) => !have.has(o))
-      if (missing.length && deckId != null) {
-        await db.cards.bulkAdd(missing.map((ord) => newCard(note.id, deckId, ord, now, now + ord) as Card))
-        cardsAdded += missing.length
+      const have = new Set(kept.map((c) => c.ord))
+      const deckId = own[0]?.deckId
+      if (deckId == null) continue
+      for (const ord of cardOrdinals(old.kind, templates, fieldNames, note.fields)) {
+        if (!have.has(ord)) {
+          toAdd.push(newCard(note.id, deckId, ord, now, now + ord) as Card)
+          cardsAdded++
+        }
       }
     }
+    if (toDelete.length) await db.cards.bulkDelete(toDelete)
+    if (toPut.length) await db.cards.bulkPut(toPut)
+    if (toAdd.length) await db.cards.bulkAdd(toAdd)
     return { cardsAdded, cardsRemoved }
   })
 }

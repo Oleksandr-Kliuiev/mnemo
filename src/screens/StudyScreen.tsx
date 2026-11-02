@@ -72,6 +72,8 @@ export default function StudyScreen({ deckId, extraNew, reviewAhead }: { deckId:
     stopSounds()
     stopSpeaking()
     const now = Date.now()
+    // Past the day cutoff (04:00 by default) the queues and limits belong to a new day.
+    if (s.isStale(now)) await s.reload(now)
     let r = s.next(now)
     if (opts.early && r.type === 'wait') r = s.next(r.until + 1)
     if (r.type === 'done') {
@@ -209,7 +211,7 @@ export default function StudyScreen({ deckId, extraNew, reviewAhead }: { deckId:
 
   const bury = async () => {
     const s = session.current
-    if (!s || !cur) return
+    if (!s || !cur || busy) return
     setMenuOpen(false)
     await s.bury(cur.card)
     toast.show('Карточка скрыта до завтра', { action: { label: 'Отменить', run: () => void undo() } })
@@ -218,7 +220,7 @@ export default function StudyScreen({ deckId, extraNew, reviewAhead }: { deckId:
 
   const suspend = async () => {
     const s = session.current
-    if (!s || !cur) return
+    if (!s || !cur || busy) return
     setMenuOpen(false)
     await s.suspend(cur.card)
     toast.show('Карточка приостановлена', { action: { label: 'Отменить', run: () => void undo() } })
@@ -226,7 +228,7 @@ export default function StudyScreen({ deckId, extraNew, reviewAhead }: { deckId:
   }
 
   const flag = async (f: number) => {
-    if (!cur) return
+    if (!cur || busy) return
     await setFlag([cur.card.id], f)
     setCur({ ...cur, card: { ...cur.card, flag: f } })
     session.current?.refreshCard({ ...cur.card, flag: f })
@@ -245,27 +247,36 @@ export default function StudyScreen({ deckId, extraNew, reviewAhead }: { deckId:
       danger: true,
     })
     if (!ok) return
-    const ids = (await db.cards.where('noteId').equals(cur.note.id).toArray()).map((c) => c.id)
     await deleteNotes([cur.note.id])
-    for (const id of ids) session.current?.forget(id)
+    session.current?.forgetNote(cur.note.id)
     toast.show('Запись удалена')
     await showNext()
   }
 
   const closeEditor = async () => {
     setEditing(false)
-    if (!cur) return
+    const s = session.current
+    if (!cur || !s) return
     const note = await db.notes.get(cur.note.id)
     const card = await db.cards.get(cur.card.id)
     if (!note || !card) {
-      session.current?.forget(cur.card.id)
+      // Deleted in the editor.
+      s.forgetNote(cur.note.id)
       await showNext()
       return
     }
     const type = await db.noteTypes.get(note.typeId)
     if (!type) return
-    session.current?.refreshCard(card)
-    setCur({ ...cur, note, type, card: { ...cur.card, deckId: card.deckId, flag: card.flag }, deck: session.current?.decks.get(card.deckId) })
+    if (card.suspended || !s.deckIds.has(card.deckId) || card.state !== cur.card.state || card.reps !== cur.card.reps) {
+      // Suspended, moved out of this session or reset in the editor: continue with the next card.
+      s.forget(card.id)
+      if (!card.suspended && s.deckIds.has(card.deckId)) await s.reload()
+      await showNext()
+      return
+    }
+    s.refreshCard(card)
+    setCur({ ...cur, note, type, card, deck: s.decks.get(card.deckId) })
+    if (phase === 'answer') setPreview(s.preview(card, Date.now()))
   }
 
   const close = () => goBack(deckId != null ? `/deck/${deckId}` : '/')
